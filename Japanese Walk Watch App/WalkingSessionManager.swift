@@ -26,7 +26,7 @@ final class WalkingSessionManager: NSObject, ObservableObject {
     private var timerCancellable: AnyCancellable?
     private let synthesizer = AVSpeechSynthesizer()
     private var audioPlayer: AVAudioPlayer?
-    private var pendingSpeechPhase: WalkingPhase?
+    private var speechTask: DispatchWorkItem?
     private let healthStore = HKHealthStore()
     private var workoutSession: HKWorkoutSession?
     private var workoutBuilder: HKLiveWorkoutBuilder?
@@ -98,25 +98,32 @@ final class WalkingSessionManager: NSObject, ObservableObject {
         // 1. Haptic
         WKInterfaceDevice.current().play(.notification)
 
-        // 2. Chime then speech — skip on simulator (no audio hardware)
-        #if !targetEnvironment(simulator)
+        // 2. Chime then speech
         configureAudioSession()
         playChimeThenSpeak(for: phase)
-        #endif
     }
 
     private func playChimeThenSpeak(for phase: WalkingPhase) {
+        // Cancel any speech scheduled for a previous phase.
+        speechTask?.cancel()
+        speechTask = nil
+        if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
+
         let fileName = phase == .fastWalk ? "chime up" : "chime down"
-        guard let url = Bundle.main.url(forResource: fileName, withExtension: "aif") else {
+        guard let url = Bundle.main.url(forResource: fileName, withExtension: "wav") else {
             speakPhase(phase)
             return
         }
         do {
-            if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
             audioPlayer = try AVAudioPlayer(contentsOf: url)
-            audioPlayer?.delegate = self
-            pendingSpeechPhase = phase
+            audioPlayer?.prepareToPlay()
+            let duration = audioPlayer?.duration ?? 0
             audioPlayer?.play()
+
+            // Schedule speech to fire when the chime ends.
+            let task = DispatchWorkItem { [weak self] in self?.speakPhase(phase) }
+            speechTask = task
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(duration - 0.3, 0), execute: task)
         } catch {
             print("Audio player error: \(error)")
             speakPhase(phase)
@@ -230,14 +237,4 @@ extension WalkingSessionManager: HKLiveWorkoutBuilderDelegate {
                         didCollectDataOf collectedTypes: Set<HKSampleType>) {}
 }
 
-// MARK: - AVAudioPlayerDelegate
 
-extension WalkingSessionManager: AVAudioPlayerDelegate {
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        guard let phase = pendingSpeechPhase else { return }
-        pendingSpeechPhase = nil
-        DispatchQueue.main.async {
-            self.speakPhase(phase)
-        }
-    }
-}
