@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSHealthShareUsageDescription</key>
+    <string>This app uses HealthKit to keep your walking timer active in the background.</string>
+    <key>NSHealthUpdateUsageDescription</key>
+    <string>This app starts a workout session to keep timers running while your wrist is down.</string>
+    <key>WKApplication</key>
+    <true/>
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>workout-processing</string>
+    </array>
+</dict>
+</plist>
