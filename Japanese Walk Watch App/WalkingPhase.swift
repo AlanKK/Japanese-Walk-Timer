@@ -15,18 +15,15 @@ enum WalkingPhase {
     }
 
     /// Duration of each interval in seconds.
-    static let intervalDuration: Int = 240
+    /// static let intervalDuration: Int = 240
+    static let intervalDuration: Int = 5
 
-    /// Localized display label shown on screen and spoken aloud.
+    /// Display label shown on screen and spoken aloud.
     var label: String {
-        let lang = Locale.current.language.languageCode?.identifier ?? "en"
         switch self {
-        case .idle:
-            return ""
-        case .fastWalk:
-            return lang == "ja" ? "速歩き" : "Fast walk"
-        case .slowWalk:
-            return lang == "ja" ? "ゆっくり歩き" : "Slow walk"
+        case .idle:      return ""
+        case .fastWalk:  return "Fast walk"
+        case .slowWalk:  return "Slow walk"
         }
     }
 }
