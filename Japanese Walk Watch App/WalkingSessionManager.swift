@@ -1,17 +1,18 @@
 import AVFoundation
 import Combine
-import HealthKit
 import SwiftUI
 import WatchKit
 
-/// Manages the walking interval session, including timer, speech, haptics,
-/// and an HKWorkoutSession for unlimited background execution.
-final class WalkingSessionManager: NSObject, ObservableObject {
+/// Manages the walking interval session using absolute-date phase tracking.
+/// Background delivery uses WKApplicationRefreshBackgroundTask so the user
+/// can run any other workout app simultaneously.
+final class WalkingSessionManager: ObservableObject {
 
     // MARK: - Published State
 
     @Published var phase: WalkingPhase = .idle
-    @Published var secondsRemaining: Int = WalkingPhase.intervalDuration
+    @Published var secondsRemaining: Int = 0
+    @Published var currentPhaseLabel: String = ""
 
     // MARK: - Formatted Time
 
@@ -27,68 +28,112 @@ final class WalkingSessionManager: NSObject, ObservableObject {
     private let synthesizer = AVSpeechSynthesizer()
     private var audioPlayer: AVAudioPlayer?
     private var speechTask: DispatchWorkItem?
-    private let healthStore = HKHealthStore()
-    private var workoutSession: HKWorkoutSession?
-    private var workoutBuilder: HKLiveWorkoutBuilder?
+    private var phaseEndDate: Date = .distantPast
+    private var snapshotDuration: Int = 240
+    private var snapshotLabelPair: LabelPair = IntervalSettings.allPairs[0]
+
+    // MARK: - UserDefaults Keys
+
+    private enum Keys {
+        static let isRunning     = "session.isRunning"
+        static let phaseEndDate  = "session.phaseEndDate"
+        static let currentPhase  = "session.currentPhase"
+        static let phaseDuration = "session.phaseDuration"
+        static let fastLabel     = "session.fastLabel"
+        static let slowLabel     = "session.slowLabel"
+    }
 
     // MARK: - Init
 
-    override init() {
-        super.init()
+    init() {
+        restoreIfNeeded()
     }
 
     // MARK: - Public API
 
-    func start() {
-        requestHealthKitAuthorization { [weak self] success in
-            guard success else { return }
-            DispatchQueue.main.async {
-                self?.beginWorkoutSession()
-                self?.beginWalking()
-            }
-        }
+    func start(with settings: IntervalSettings) {
+        snapshotDuration = settings.totalSeconds
+        snapshotLabelPair = settings.selectedPair
+        let startPhase: WalkingPhase = settings.startWithFastPhase ? .fastWalk : .slowWalk
+        transitionToPhase(startPhase)
+        startUITimer()
     }
 
     func stop() {
         timerCancellable?.cancel()
         timerCancellable = nil
-        endWorkoutSession()
+        speechTask?.cancel()
+        speechTask = nil
+        if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
         phase = .idle
-        secondsRemaining = WalkingPhase.intervalDuration
+        secondsRemaining = 0
+        currentPhaseLabel = ""
+        clearPersistedState()
     }
 
     func skipToNextPhase() {
         guard phase != .idle else { return }
-        phase = phase.next
-        secondsRemaining = WalkingPhase.intervalDuration
-        announcePhase()
+        transitionToPhase(phase.next)
+    }
+
+    /// Called by the app's .backgroundTask handler when a scheduled refresh fires.
+    @MainActor
+    func handleBackgroundRefresh() async {
+        guard phase != .idle else { return }
+        var transitioned = false
+        while Date() >= phaseEndDate {
+            transitionToPhase(phase.next, announce: false)
+            transitioned = true
+        }
+        if transitioned {
+            WKInterfaceDevice.current().play(.notification)
+        } else {
+            // Task fired early — re-schedule for the actual end time.
+            scheduleNextBackgroundRefresh()
+        }
     }
 
     // MARK: - Timer
 
-    private func beginWalking() {
-        phase = .fastWalk
-        secondsRemaining = WalkingPhase.intervalDuration
-        announcePhase()
-        startTimer()
-    }
-
-    private func startTimer() {
+    private func startUITimer() {
         timerCancellable = Timer.publish(every: 1, on: .main, in: .common)
             .autoconnect()
-            .sink { [weak self] _ in
-                self?.tick()
-            }
+            .sink { [weak self] _ in self?.tick() }
     }
 
     private func tick() {
         guard phase != .idle else { return }
+        let remaining = Int(phaseEndDate.timeIntervalSinceNow.rounded(.up))
+        if remaining <= 0 {
+            transitionToPhase(phase.next)
+        } else {
+            secondsRemaining = remaining
+        }
+    }
 
-        secondsRemaining -= 1
-        if secondsRemaining <= 0 {
-            phase = phase.next
-            secondsRemaining = WalkingPhase.intervalDuration
-            announcePhase()
+    // MARK: - Phase Transition
+
+    private func transitionToPhase(_ newPhase: WalkingPhase, announce: Bool = true) {
+        phase = newPhase
+        phaseEndDate = Date().addingTimeInterval(TimeInterval(snapshotDuration))
+        secondsRemaining = snapshotDuration
+        currentPhaseLabel = labelForPhase(newPhase)
+        persistState()
+        scheduleNextBackgroundRefresh()
+        if announce { announcePhase() }
+    }
+
+    // MARK: - Background Task Scheduling
+
+    private func scheduleNextBackgroundRefresh() {
+        guard phase != .idle else { return }
+        WKExtension.shared().scheduleBackgroundRefresh(
+            withPreferredDate: phaseEndDate,
+            userInfo: nil
+        ) { error in
+            if let error = error {
+                print("Background refresh schedule error: \(error)")
+            }
         }
     }
 
@@ -131,110 +176,79 @@ final class WalkingSessionManager: NSObject, ObservableObject {
     }
 
     private func speakPhase(_ phase: WalkingPhase) {
-        let utterance = AVSpeechUtterance(string: phase.label)
+        let utterance = AVSpeechUtterance(string: labelForPhase(phase))
         utterance.volume = 1.0
         utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
         if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
         synthesizer.speak(utterance)
     }
 
+    private func labelForPhase(_ phase: WalkingPhase) -> String {
+        switch phase {
+        case .idle:      return ""
+        case .fastWalk:  return snapshotLabelPair.fastLabel
+        case .slowWalk:  return snapshotLabelPair.slowLabel
+        }
+    }
+
     private func configureAudioSession() {
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, options: [.duckOthers])
+            try session.setCategory(.playback, options: [.duckOthers, .allowBluetoothA2DP])
             try session.setActive(true)
         } catch {
             print("Audio session error: \(error)")
         }
     }
 
-    // MARK: - HealthKit Workout Session
+    // MARK: - State Persistence
 
-    private func requestHealthKitAuthorization(completion: @escaping (Bool) -> Void) {
-        guard HKHealthStore.isHealthDataAvailable() else {
-            completion(false)
+    private func persistState() {
+        let d = UserDefaults.standard
+        d.set(true,                                forKey: Keys.isRunning)
+        d.set(phaseEndDate.timeIntervalSince1970,  forKey: Keys.phaseEndDate)
+        d.set(phase.rawValue,                      forKey: Keys.currentPhase)
+        d.set(snapshotDuration,                    forKey: Keys.phaseDuration)
+        d.set(snapshotLabelPair.fastLabel,         forKey: Keys.fastLabel)
+        d.set(snapshotLabelPair.slowLabel,         forKey: Keys.slowLabel)
+    }
+
+    private func clearPersistedState() {
+        let d = UserDefaults.standard
+        d.removeObject(forKey: Keys.isRunning)
+        d.removeObject(forKey: Keys.phaseEndDate)
+        d.removeObject(forKey: Keys.currentPhase)
+        d.removeObject(forKey: Keys.phaseDuration)
+        d.removeObject(forKey: Keys.fastLabel)
+        d.removeObject(forKey: Keys.slowLabel)
+    }
+
+    private func restoreIfNeeded() {
+        let d = UserDefaults.standard
+        guard d.bool(forKey: Keys.isRunning),
+              let rawPhase = d.string(forKey: Keys.currentPhase),
+              let restoredPhase = WalkingPhase(rawValue: rawPhase),
+              restoredPhase != .idle else { return }
+
+        let endTimestamp = d.double(forKey: Keys.phaseEndDate)
+        guard endTimestamp > 0 else { return }
+
+        let restoredEndDate = Date(timeIntervalSince1970: endTimestamp)
+        guard restoredEndDate > Date() else {
+            clearPersistedState()
             return
         }
 
-        // We only need workout type — we don't read or write any health samples.
-        let workoutType = HKQuantityType.workoutType()
-        healthStore.requestAuthorization(toShare: [workoutType], read: []) { success, error in
-            if let error = error {
-                print("HealthKit auth error: \(error)")
-            }
-            completion(success)
-        }
+        snapshotDuration = d.integer(forKey: Keys.phaseDuration)
+        let fastLabel = d.string(forKey: Keys.fastLabel) ?? "Fast Walk"
+        let slowLabel = d.string(forKey: Keys.slowLabel) ?? "Slow Walk"
+        snapshotLabelPair = LabelPair(id: 0, fastLabel: fastLabel, slowLabel: slowLabel)
+        phase = restoredPhase
+        phaseEndDate = restoredEndDate
+        secondsRemaining = max(0, Int(restoredEndDate.timeIntervalSinceNow))
+        currentPhaseLabel = labelForPhase(restoredPhase)
+        startUITimer()
     }
-
-    private func beginWorkoutSession() {
-        let config = HKWorkoutConfiguration()
-        config.activityType = .walking
-        config.locationType = .outdoor
-
-        do {
-            let session = try HKWorkoutSession(healthStore: healthStore,
-                                                configuration: config)
-            let builder = session.associatedWorkoutBuilder()
-            builder.dataSource = HKLiveWorkoutDataSource(healthStore: healthStore,
-                                                          workoutConfiguration: config)
-
-            session.delegate = self
-            builder.delegate = self
-
-            self.workoutSession = session
-            self.workoutBuilder = builder
-
-            session.startActivity(with: Date())
-            builder.beginCollection(withStart: Date()) { _, error in
-                if let error = error {
-                    print("Builder begin error: \(error)")
-                }
-            }
-        } catch {
-            print("Workout session error: \(error)")
-        }
-    }
-
-    private func endWorkoutSession() {
-        workoutSession?.end()
-        workoutBuilder?.endCollection(withEnd: Date()) { [weak self] _, error in
-            if let error = error {
-                print("Builder end error: \(error)")
-            }
-            self?.workoutBuilder?.finishWorkout { _, error in
-                if let error = error {
-                    print("Finish workout error: \(error)")
-                }
-            }
-        }
-        workoutSession = nil
-        workoutBuilder = nil
-    }
-}
-
-// MARK: - HKWorkoutSessionDelegate
-
-extension WalkingSessionManager: HKWorkoutSessionDelegate {
-    func workoutSession(_ workoutSession: HKWorkoutSession,
-                        didChangeTo toState: HKWorkoutSessionState,
-                        from fromState: HKWorkoutSessionState,
-                        date: Date) {
-        // No action needed — we just need the session alive for background.
-    }
-
-    func workoutSession(_ workoutSession: HKWorkoutSession,
-                        didFailWithError error: Error) {
-        print("Workout session failed: \(error)")
-    }
-}
-
-// MARK: - HKLiveWorkoutBuilderDelegate
-
-extension WalkingSessionManager: HKLiveWorkoutBuilderDelegate {
-    func workoutBuilderDidCollectEvent(_ workoutBuilder: HKLiveWorkoutBuilder) {}
-
-    func workoutBuilder(_ workoutBuilder: HKLiveWorkoutBuilder,
-                        didCollectDataOf collectedTypes: Set<HKSampleType>) {}
 }
 
 

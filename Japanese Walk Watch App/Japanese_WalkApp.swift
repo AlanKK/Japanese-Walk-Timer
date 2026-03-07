@@ -9,9 +9,15 @@ import SwiftUI
 
 @main
 struct Japanese_Walk_Watch_AppApp: App {
+    @StateObject private var sessionManager = WalkingSessionManager()
+
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(sessionManager)
+        }
+        .backgroundTask(.appRefresh("interval.phase-transition")) {
+            await sessionManager.handleBackgroundRefresh()
         }
     }
 }
