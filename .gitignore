@@ -1,0 +1,48 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode user-specific files
+xcuserdata/
+*.xcuserstate
+*.xccheckout
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.moved-aside
+
+# Xcode build output
+build/
+DerivedData/
+*.ipa
+*.dSYM
+*.dSYM.zip
+
+# Swift Package Manager
+.build/
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+
+# CocoaPods (if ever added)
+Pods/
+Podfile.lock
+
+# Fastlane (if ever added)
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# Signing & provisioning (NEVER commit these)
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile
+*.certSigningRequest
+
+# Secrets / API keys (NEVER commit these)
+.env
+Secrets.swift
+APIKeys.swift
+
