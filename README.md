@@ -1,3 +1,5 @@
+<img src="japanese-walk.png" width="100" alt="Japanese Walk Timer">
+
 # Japanese Walk Timer
 
 An open-source Apple Watch app for the Japanese Walking Method — alternating intervals of fast and slow walking.
