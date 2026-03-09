@@ -23,6 +23,12 @@ final class IntervalSettings: ObservableObject {
     @Published var labelPairIndex: Int {
         didSet { Self.defaults.set(labelPairIndex, forKey: "labelPairIndex") }
     }
+    @Published var muteChime: Bool {
+        didSet { Self.defaults.set(muteChime, forKey: "muteChime") }
+    }
+    @Published var muteSpeech: Bool {
+        didSet { Self.defaults.set(muteSpeech, forKey: "muteSpeech") }
+    }
 
     /// Total interval duration in seconds (minimum 1).
     var totalSeconds: Int {
@@ -51,5 +57,7 @@ final class IntervalSettings: ObservableObject {
         self.intervalSeconds    = secs
         self.startWithFastPhase = fast
         self.labelPairIndex     = min(pairIdx, Self.allPairs.count - 1)
+        self.muteChime          = Self.defaults.bool(forKey: "muteChime")
+        self.muteSpeech         = Self.defaults.bool(forKey: "muteSpeech")
     }
 }

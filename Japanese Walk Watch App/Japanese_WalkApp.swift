@@ -16,8 +16,5 @@ struct Japanese_Walk_Watch_AppApp: App {
             ContentView()
                 .environmentObject(sessionManager)
         }
-        .backgroundTask(.appRefresh("interval.phase-transition")) {
-            await sessionManager.handleBackgroundRefresh()
-        }
     }
 }

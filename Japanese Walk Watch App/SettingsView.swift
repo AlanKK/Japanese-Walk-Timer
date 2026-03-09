@@ -31,6 +31,11 @@ struct SettingsView: View {
                     }
                 }
             }
+
+            Section("Audio") {
+                Toggle("Mute Chime", isOn: $settings.muteChime)
+                Toggle("Mute Speech", isOn: $settings.muteSpeech)
+            }
         }
         .navigationTitle("Settings")
     }
