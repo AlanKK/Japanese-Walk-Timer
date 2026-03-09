@@ -2,12 +2,13 @@ import SwiftUI
 
 /// Root view that switches between the Start screen and the Active Interval screen.
 struct ContentView: View {
-    @StateObject private var sessionManager = WalkingSessionManager()
+    @EnvironmentObject private var sessionManager: WalkingSessionManager
+    @StateObject private var settings = IntervalSettings()
 
     var body: some View {
-        Group {
+        NavigationStack {
             if sessionManager.phase == .idle {
-                StartView(onStart: { sessionManager.start() })
+                StartView(settings: settings, onStart: { sessionManager.start(with: settings) })
             } else {
                 ActiveIntervalView(sessionManager: sessionManager)
             }
@@ -17,4 +18,6 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
+        .environmentObject(WalkingSessionManager())
 }
+

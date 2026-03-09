@@ -10,7 +10,7 @@ struct ActiveIntervalView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            Text(sessionManager.phase.label)
+            Text(sessionManager.currentPhaseLabel)
                 .font(.system(size: 28, weight: .bold))
                 .foregroundColor(phaseColor)
 

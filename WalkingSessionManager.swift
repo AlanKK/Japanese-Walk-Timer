@@ -1,12 +1,13 @@
 import AVFoundation
 import Combine
+import HealthKit
 import SwiftUI
 import WatchKit
 
 /// Manages the walking interval session using absolute-date phase tracking.
-/// A WKExtendedRuntimeSession keeps the app alive in the background so
-/// chime + speech audio plays reliably through AirPods without interfering
-/// with an Apple Fitness workout running simultaneously.
+/// A lightweight HKWorkoutSession keeps the app alive in the background so
+/// chime + speech audio plays reliably through AirPods, even when another
+/// workout (e.g. Apple Fitness) is running simultaneously on watchOS 11+.
 final class WalkingSessionManager: NSObject, ObservableObject {
 
     // MARK: - Published State
@@ -36,9 +37,10 @@ final class WalkingSessionManager: NSObject, ObservableObject {
     private var snapshotMuteChime: Bool = false
     private var snapshotMuteSpeech: Bool = false
 
-    // MARK: - Extended Runtime Session (background keep-alive)
+    // MARK: - HealthKit (background execution)
 
-    private var extendedSession: WKExtendedRuntimeSession?
+    private let healthStore = HKHealthStore()
+    private var workoutSession: HKWorkoutSession?
 
     // MARK: - UserDefaults Keys
 
@@ -59,19 +61,37 @@ final class WalkingSessionManager: NSObject, ObservableObject {
         restoreIfNeeded()
     }
 
-    // MARK: - Extended Runtime Session
+    // MARK: - HealthKit Authorization
 
-    private func startExtendedSession() {
-        guard extendedSession?.state != .running else { return }
-        let session = WKExtendedRuntimeSession()
-        session.delegate = self
-        extendedSession = session
-        session.start()
+    /// Request HealthKit permission. Call once (e.g. on first app launch).
+    func requestHealthKitAuthorization() {
+        guard HKHealthStore.isHealthDataAvailable() else { return }
+        let typesToShare: Set<HKSampleType> = [HKWorkoutType.workoutType()]
+        healthStore.requestAuthorization(toShare: typesToShare, read: nil) { _, error in
+            if let error { print("HealthKit auth error: \(error)") }
+        }
     }
 
-    private func stopExtendedSession() {
-        extendedSession?.invalidate()
-        extendedSession = nil
+    // MARK: - Workout Session (background keep-alive)
+
+    private func startWorkoutSession() {
+        guard workoutSession == nil else { return }
+        let config = HKWorkoutConfiguration()
+        config.activityType = .walking
+        config.locationType = .outdoor
+        do {
+            let session = try HKWorkoutSession(healthStore: healthStore, configuration: config)
+            session.delegate = self
+            workoutSession = session
+            session.startActivity(with: Date())
+        } catch {
+            print("Workout session start error: \(error)")
+        }
+    }
+
+    private func stopWorkoutSession() {
+        workoutSession?.end()
+        workoutSession = nil
     }
 
     // MARK: - Public API
@@ -82,7 +102,7 @@ final class WalkingSessionManager: NSObject, ObservableObject {
         snapshotMuteChime = settings.muteChime
         snapshotMuteSpeech = settings.muteSpeech
         let startPhase: WalkingPhase = settings.startWithFastPhase ? .fastWalk : .slowWalk
-        startExtendedSession()
+        startWorkoutSession()
         transitionToPhase(startPhase)
         startUITimer()
     }
@@ -93,7 +113,7 @@ final class WalkingSessionManager: NSObject, ObservableObject {
         speechTask?.cancel()
         speechTask = nil
         if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
-        stopExtendedSession()
+        stopWorkoutSession()
         deactivateAudioSession()
         phase = .idle
         secondsRemaining = 0
@@ -180,7 +200,7 @@ final class WalkingSessionManager: NSObject, ObservableObject {
 
     private func speakPhase(_ phase: WalkingPhase) {
         guard !snapshotMuteSpeech else {
-            if !isSpeechSessionActive { relaxAudioSession() }
+            deactivateAudioSession()
             return
         }
         let utterance = AVSpeechUtterance(string: labelForPhase(phase))
@@ -202,21 +222,10 @@ final class WalkingSessionManager: NSObject, ObservableObject {
     private func configureAudioSession() {
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, options: [.duckOthers, .allowBluetoothA2DP])
+            try session.setCategory(.playback, options: [.mixWithOthers, .allowBluetoothA2DP])
             try session.setActive(true)
         } catch {
             print("Audio session error: \(error)")
-        }
-    }
-
-    /// After an announcement, unduck other audio but keep the session active
-    /// so the Bluetooth route to AirPods is not released between intervals.
-    private func relaxAudioSession() {
-        do {
-            try AVAudioSession.sharedInstance()
-                .setCategory(.playback, options: [.mixWithOthers, .allowBluetoothA2DP])
-        } catch {
-            print("Audio session relax error: \(error)")
         }
     }
 
@@ -276,7 +285,7 @@ final class WalkingSessionManager: NSObject, ObservableObject {
         phaseEndDate = restoredEndDate
         secondsRemaining = max(0, Int(restoredEndDate.timeIntervalSinceNow))
         currentPhaseLabel = labelForPhase(restoredPhase)
-        startExtendedSession()
+        startWorkoutSession()
         startUITimer()
     }
 }
@@ -290,32 +299,27 @@ extension WalkingSessionManager: AVSpeechSynthesizerDelegate {
     ) {
         guard isSpeechSessionActive else { return }
         isSpeechSessionActive = false
-        relaxAudioSession()
+        deactivateAudioSession()
     }
 }
 
-// MARK: - WKExtendedRuntimeSessionDelegate
+// MARK: - HKWorkoutSessionDelegate
 
-extension WalkingSessionManager: WKExtendedRuntimeSessionDelegate {
-    func extendedRuntimeSessionDidStart(
-        _ extendedRuntimeSession: WKExtendedRuntimeSession
-    ) {}
-
-    func extendedRuntimeSessionWillExpire(
-        _ extendedRuntimeSession: WKExtendedRuntimeSession
+extension WalkingSessionManager: HKWorkoutSessionDelegate {
+    func workoutSession(
+        _ workoutSession: HKWorkoutSession,
+        didChangeTo toState: HKWorkoutSessionState,
+        from fromState: HKWorkoutSessionState,
+        date: Date
     ) {
-        // Restart the session before it expires so background execution continues.
-        extendedSession = nil
-        startExtendedSession()
+        // No action needed — the session exists solely for background execution.
     }
 
-    func extendedRuntimeSession(
-        _ extendedRuntimeSession: WKExtendedRuntimeSession,
-        didInvalidateWith reason: WKExtendedRuntimeSessionInvalidationReason,
-        error: Error?
+    func workoutSession(
+        _ workoutSession: HKWorkoutSession,
+        didFailWithError error: Error
     ) {
-        extendedSession = nil
-        if let error { print("Extended session error: \(error)") }
+        print("Workout session error: \(error)")
     }
 }
 
