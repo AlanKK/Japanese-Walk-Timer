@@ -28,6 +28,14 @@ struct SummaryView: View {
                     value: "\(summary.slowIntervalCount)"
                 )
 
+                if let distance = summary.formattedDistance {
+                    LabeledValue(label: "Distance", value: distance)
+                }
+
+                if let steps = summary.formattedStepCount {
+                    LabeledValue(label: "Steps", value: steps)
+                }
+
                 Divider()
 
                 Button("Done", action: onDismiss)
@@ -63,7 +71,9 @@ private struct LabeledValue: View {
             fastIntervalCount: 3,
             slowIntervalCount: 3,
             fastLabel: "Fast Walk",
-            slowLabel: "Slow Walk"
+            slowLabel: "Slow Walk",
+            distanceMeters: 1340,
+            stepCount: 1802
         ),
         onDismiss: {}
     )

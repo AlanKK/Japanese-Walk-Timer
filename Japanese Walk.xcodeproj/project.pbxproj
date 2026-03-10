@@ -463,6 +463,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = "Japanese Walk";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app uses HealthKit to keep your walking timer active in the background.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app starts a workout session to keep timers running while your wrist is down.";
+				INFOPLIST_KEY_NSMotionUsageDescription = "This app counts your steps and measures walking distance during each session.";
 				INFOPLIST_KEY_UIBackgroundModes = "workout-processing";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKWatchOnly = YES;
@@ -500,6 +501,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = "Japanese Walk";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "This app uses HealthKit to keep your walking timer active in the background.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "This app starts a workout session to keep timers running while your wrist is down.";
+				INFOPLIST_KEY_NSMotionUsageDescription = "This app counts your steps and measures walking distance during each session.";
 				INFOPLIST_KEY_UIBackgroundModes = "workout-processing";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKWatchOnly = YES;

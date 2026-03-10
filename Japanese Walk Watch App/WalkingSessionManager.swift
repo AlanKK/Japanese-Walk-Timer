@@ -1,5 +1,6 @@
 import AVFoundation
 import Combine
+import CoreMotion
 import SwiftUI
 import WatchKit
 
@@ -11,6 +12,8 @@ struct SessionSummary {
     let slowIntervalCount: Int
     let fastLabel: String
     let slowLabel: String
+    let distanceMeters: Double?
+    let stepCount: Int?
 
     var formattedTotalTime: String {
         let t = Int(totalTime)
@@ -22,6 +25,20 @@ struct SessionSummary {
         } else {
             return String(format: "%d:%02d", m, s)
         }
+    }
+
+    var formattedDistance: String? {
+        guard let meters = distanceMeters else { return nil }
+        let measurement = Measurement(value: meters, unit: UnitLength.meters)
+        let formatter = MeasurementFormatter()
+        formatter.unitOptions = .naturalScale
+        formatter.numberFormatter.maximumFractionDigits = 2
+        return formatter.string(from: measurement)
+    }
+
+    var formattedStepCount: String? {
+        guard let count = stepCount else { return nil }
+        return count.formatted()
     }
 }
 
@@ -57,6 +74,7 @@ final class WalkingSessionManager: NSObject, ObservableObject {
     private var sessionStartDate: Date?
     private var completedFastIntervals: Int = 0
     private var completedSlowIntervals: Int = 0
+    private let pedometer = CMPedometer()
     private var snapshotDuration: Int = 240
     private var snapshotLabelPair: LabelPair = IntervalSettings.allPairs[0]
     private var snapshotMuteChime: Bool = false
@@ -118,15 +136,43 @@ final class WalkingSessionManager: NSObject, ObservableObject {
     }
 
     func stop() {
-        // Capture summary before clearing state
+        // Capture timing before clearing state
         let elapsed = sessionStartDate.map { Date().timeIntervalSince($0) } ?? 0
+        let capturedStartDate = sessionStartDate
+        let capturedFast = completedFastIntervals
+        let capturedSlow = completedSlowIntervals
+        let capturedFastLabel = snapshotLabelPair.fastLabel
+        let capturedSlowLabel = snapshotLabelPair.slowLabel
+
+        // Show summary immediately; pedometer data will fill in asynchronously
         sessionSummary = SessionSummary(
             totalTime: elapsed,
-            fastIntervalCount: completedFastIntervals,
-            slowIntervalCount: completedSlowIntervals,
-            fastLabel: snapshotLabelPair.fastLabel,
-            slowLabel: snapshotLabelPair.slowLabel
+            fastIntervalCount: capturedFast,
+            slowIntervalCount: capturedSlow,
+            fastLabel: capturedFastLabel,
+            slowLabel: capturedSlowLabel,
+            distanceMeters: nil,
+            stepCount: nil
         )
+
+        // Query CoreMotion pedometer for the session window
+        if let start = capturedStartDate,
+           CMPedometer.isStepCountingAvailable() {
+            pedometer.queryPedometerData(from: start, to: Date()) { [weak self] data, error in
+                guard let self, let data, error == nil else { return }
+                DispatchQueue.main.async {
+                    self.sessionSummary = SessionSummary(
+                        totalTime: elapsed,
+                        fastIntervalCount: capturedFast,
+                        slowIntervalCount: capturedSlow,
+                        fastLabel: capturedFastLabel,
+                        slowLabel: capturedSlowLabel,
+                        distanceMeters: data.distance?.doubleValue,
+                        stepCount: data.numberOfSteps.intValue
+                    )
+                }
+            }
+        }
 
         timerCancellable?.cancel()
         timerCancellable = nil
