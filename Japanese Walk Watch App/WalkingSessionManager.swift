@@ -3,6 +3,28 @@ import Combine
 import SwiftUI
 import WatchKit
 
+// MARK: - Session Summary
+
+struct SessionSummary {
+    let totalTime: TimeInterval
+    let fastIntervalCount: Int
+    let slowIntervalCount: Int
+    let fastLabel: String
+    let slowLabel: String
+
+    var formattedTotalTime: String {
+        let t = Int(totalTime)
+        let h = t / 3600
+        let m = (t % 3600) / 60
+        let s = t % 60
+        if h > 0 {
+            return String(format: "%d:%02d:%02d", h, m, s)
+        } else {
+            return String(format: "%d:%02d", m, s)
+        }
+    }
+}
+
 /// Manages the walking interval session using absolute-date phase tracking.
 /// A WKExtendedRuntimeSession keeps the app alive in the background so
 /// chime + speech audio plays reliably through AirPods without interfering
@@ -14,6 +36,7 @@ final class WalkingSessionManager: NSObject, ObservableObject {
     @Published var phase: WalkingPhase = .idle
     @Published var secondsRemaining: Int = 0
     @Published var currentPhaseLabel: String = ""
+    @Published var sessionSummary: SessionSummary?
 
     // MARK: - Formatted Time
 
@@ -31,6 +54,9 @@ final class WalkingSessionManager: NSObject, ObservableObject {
     private var audioPlayer: AVAudioPlayer?
     private var speechTask: DispatchWorkItem?
     private var phaseEndDate: Date = .distantPast
+    private var sessionStartDate: Date?
+    private var completedFastIntervals: Int = 0
+    private var completedSlowIntervals: Int = 0
     private var snapshotDuration: Int = 240
     private var snapshotLabelPair: LabelPair = IntervalSettings.allPairs[0]
     private var snapshotMuteChime: Bool = false
@@ -81,6 +107,10 @@ final class WalkingSessionManager: NSObject, ObservableObject {
         snapshotLabelPair = settings.selectedPair
         snapshotMuteChime = settings.muteChime
         snapshotMuteSpeech = settings.muteSpeech
+        sessionStartDate = Date()
+        completedFastIntervals = 0
+        completedSlowIntervals = 0
+        sessionSummary = nil
         let startPhase: WalkingPhase = settings.startWithFastPhase ? .fastWalk : .slowWalk
         startExtendedSession()
         transitionToPhase(startPhase)
@@ -88,6 +118,16 @@ final class WalkingSessionManager: NSObject, ObservableObject {
     }
 
     func stop() {
+        // Capture summary before clearing state
+        let elapsed = sessionStartDate.map { Date().timeIntervalSince($0) } ?? 0
+        sessionSummary = SessionSummary(
+            totalTime: elapsed,
+            fastIntervalCount: completedFastIntervals,
+            slowIntervalCount: completedSlowIntervals,
+            fastLabel: snapshotLabelPair.fastLabel,
+            slowLabel: snapshotLabelPair.slowLabel
+        )
+
         timerCancellable?.cancel()
         timerCancellable = nil
         speechTask?.cancel()
@@ -98,6 +138,7 @@ final class WalkingSessionManager: NSObject, ObservableObject {
         phase = .idle
         secondsRemaining = 0
         currentPhaseLabel = ""
+        sessionStartDate = nil
         clearPersistedState()
     }
 
@@ -128,6 +169,11 @@ final class WalkingSessionManager: NSObject, ObservableObject {
 
     private func transitionToPhase(_ newPhase: WalkingPhase, announce: Bool = true) {
         phase = newPhase
+        switch newPhase {
+        case .fastWalk: completedFastIntervals += 1
+        case .slowWalk: completedSlowIntervals += 1
+        case .idle: break
+        }
         phaseEndDate = Date().addingTimeInterval(TimeInterval(snapshotDuration))
         secondsRemaining = snapshotDuration
         currentPhaseLabel = labelForPhase(newPhase)
