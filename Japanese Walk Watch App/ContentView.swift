@@ -7,7 +7,9 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            if sessionManager.phase == .idle {
+            if let summary = sessionManager.sessionSummary {
+                SummaryView(summary: summary, onDismiss: { sessionManager.sessionSummary = nil })
+            } else if sessionManager.phase == .idle {
                 StartView(settings: settings, onStart: { sessionManager.start(with: settings) })
             } else {
                 ActiveIntervalView(sessionManager: sessionManager)
