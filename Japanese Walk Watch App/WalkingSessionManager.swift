@@ -52,6 +52,7 @@ final class WalkingSessionManager: NSObject, ObservableObject {
 
     @Published var phase: WalkingPhase = .idle
     @Published var secondsRemaining: Int = 0
+    @Published var currentPhaseTotalSeconds: Int = 0
     @Published var currentPhaseLabel: String = ""
     @Published var sessionSummary: SessionSummary?
 
@@ -222,6 +223,7 @@ final class WalkingSessionManager: NSObject, ObservableObject {
         }
         phaseEndDate = Date().addingTimeInterval(TimeInterval(snapshotDuration))
         secondsRemaining = snapshotDuration
+        currentPhaseTotalSeconds = snapshotDuration
         currentPhaseLabel = labelForPhase(newPhase)
         persistState()
         if announce { announcePhase() }
